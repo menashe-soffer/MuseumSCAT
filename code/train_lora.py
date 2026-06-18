@@ -153,14 +153,28 @@ def my_trainer(model, processed_hf_dataset, save_path, device):
     # Inside your custom collate function, ensure tensors are initialized on CPU first:
     def qwen_collate_fn(batch):
 
-        # Using a list comprehension with .clone().detach()
-        input_ids = torch.stack([item["input_ids"].clone().detach() for item in batch])
-        attention_mask = torch.stack([item["attention_mask"].clone().detach() for item in batch])
-        labels = torch.stack([item["labels"].clone().detach() for item in batch])
-        image_grid_thw = torch.stack([item["image_grid_thw"].clone().detach() for item in batch])
+        try:
+            # this works for the "manual" preperation of the dataset
+            input_ids = torch.Tensor([item["input_ids"] for item in batch]).unsqueeze(0).to(torch.long)
+            attention_mask = torch.Tensor([item["attention_mask"] for item in batch]).unsqueeze(0).to(torch.long)
+            labels = torch.Tensor([item["labels"] for item in batch]).unsqueeze(0).to(torch.long)
+            image_grid_thw = torch.Tensor([item["image_grid_thw"] for item in batch]).to(torch.long)
+            # For pixel_values, since it's a cat operation:
+            pixel_values = torch.Tensor([item["pixel_values"] for item in batch]).to(torch.bfloat16)
+        except:
+            # Using a list comprehension with .clone().detach()
+            input_ids = torch.stack([item["input_ids"].clone().detach() for item in batch])
+            attention_mask = torch.stack([item["attention_mask"].clone().detach() for item in batch])
+            labels = torch.stack([item["labels"].clone().detach() for item in batch])
+            image_grid_thw = torch.stack([item["image_grid_thw"].clone().detach() for item in batch])
+            # For pixel_values, since it's a cat operation:
+            pixel_values = torch.cat([item["pixel_values"].clone().detach().to(torch.bfloat16) for item in batch], dim=0)
 
-        # For pixel_values, since it's a cat operation:
-        pixel_values = torch.cat([item["pixel_values"].clone().detach().to(torch.bfloat16) for item in batch], dim=0)
+        # print('input_ids:     \t', input_ids.shape)
+        # print('attention_mask:\t', attention_mask.shape)
+        # print('labels:        \t', labels.shape)
+        # print('image_grid_thw:\t', image_grid_thw.shape)
+        # print('pixel_values:  \t', pixel_values.shape)
 
         return {
             "input_ids": input_ids,
@@ -320,31 +334,26 @@ for name, param in model.named_parameters():
             none_lora += 1
 print(trainable_params_found, 'layers require grads', none_lora, 'not from lora')
 
+
 def make_row(row):
-    img_path = os.path.join(dest_dir, row["image_file"])
-    date_val = str(row["verbatimDate"]).strip().lower()
-    loc_val = str(row["verbatimLocality"]).strip().lower()
-    #date_conf = 1.0 if date_val == "MISSING" else 0.95
-    #loc_conf = 1.0 if loc_val == "MISSING" else 0.95
-
-    # Ensure standard fallback syntax if the field represents a missing value
-    if date_val in ["nan", "", "none"]:
-        date_val = "missing"
-    if loc_val in ["nan", "", "none"]:
-        loc_val = "missing"
-
+    img_path  = os.path.join(dest_dir, row["image_file"])
+    date_val  = str(row["verbatimDate"])
+    loc_val   = str(row["verbatimLocality"])
+    # Training confidences are all 1.0 (ground truth artifact) — use realistic values instead
+    date_conf = 1.0 if date_val == "MISSING" else 0.95
+    loc_conf  = 1.0 if loc_val  == "MISSING" else 0.95
     return {
         "messages": [
             {"role": "user", "content": [
                 {"type": "image", "image": img_path},
-                {"type": "text", "text": propmt},
+                {"type": "text",  "text": propmt},
             ]},
             {"role": "assistant", "content": [
                 {"type": "text", "text": json.dumps({
-                    "verbatimDate": date_val,
-                    #"verbatimDate_confidence": date_conf,
-                    "verbatimLocality": loc_val,
-                    #"verbatimLocality_confidence": loc_conf,
+                    "verbatimDate":                date_val,
+                    "verbatimDate_confidence":     date_conf,
+                    "verbatimLocality":            loc_val,
+                    "verbatimLocality_confidence": loc_conf,
                 })}
             ]},
         ]
@@ -353,11 +362,11 @@ def make_row(row):
 
 src = train_df.head(20) if SMOKE else train_df
 hf_dataset = Dataset.from_list([make_row(r) for _, r in src.iterrows()])
-#processed_hf_dataset = finalize_dataset_for_training(partially_processed_dataset=hf_dataset, processor=processor, min_pixels=256 * 28 * 28, max_pixels=256 * 28 * 28)
+processed_hf_dataset = finalize_dataset_for_training(partially_processed_dataset=hf_dataset, processor=processor, min_pixels=256 * 28 * 28, max_pixels=256 * 28 * 28)
 
 from model_parsing import custom_model_parser, ExecutionFlowWrapper
 #custom_model_parser(model)
-ExecutionFlowWrapper(processor, model, hf_dataset[0])
+#ExecutionFlowWrapper(processor, model, hf_dataset[0])
 
 print(f"Training on {len(hf_dataset)} samples (smoke={SMOKE})")
 # Clean memory before launching trainer
@@ -405,97 +414,17 @@ trainer = SFTTrainer(
     ),
 )
 
-model = trainer.model
-#processed_hf_dataset = trainer.train_dataset
-# Extract the underlying collator function from the trainer
-hf_collator = trainer.data_collator
 
-# Build a list to hold your fully prepared batches
-processed_batches = []
-batch_size = 1  # Use your target training batch size
-
-
-def custom_collate_with_vision(samples, processor):
-
-    batch_input_ids = []
-    batch_attention_mask = []
-    batch_pixel_values = []
-    batch_image_grid_thw = []
-
-    for s in samples:
-        # 1. Prepare single-sample inputs
-        text = processor.apply_chat_template(s["messages"], tokenize=False)
-        valid_images = []
-        for msg in s["messages"]:
-            for content in msg["content"]:
-                if content["type"] == "image":
-                    valid_images.append(Image.open(content["image"]).convert("RGB"))
-
-        # # 1. Resize your real image (in-place)
-        # valid_images[0].thumbnail((336, 336))
-        #
-        # # 2. Create the dummy image directly at the target size
-        # # No need to call .thumbnail() on it if you create it at the right size
-        # dummy_img = Image.new('RGB', (336, 336), color=(0, 0, 0))
-        #
-        # # 3. Now build your aligned list
-        # aligned_images = [valid_images[0], dummy_img, dummy_img]
-
-        # 2. Process INDIVIDUALLY to force perfect alignment
-        single_batch = processor(
-            text=[text],
-            images=[valid_images[0], valid_images[0], valid_images[0]],#[aligned_images],
-            return_tensors="pt"
-        )
-
-        batch_input_ids.append(single_batch["input_ids"].squeeze(0))
-        batch_attention_mask.append(single_batch["attention_mask"].squeeze(0))
-        batch_pixel_values.append(single_batch["pixel_values"].squeeze(0))
-        batch_image_grid_thw.append(single_batch["image_grid_thw"].squeeze(0))
-
-    # 3. Manually Pad and Stack
-    # Since sequences can have different lengths, use torch.nn.utils.rnn.pad_sequence
-    from torch.nn.utils.rnn import pad_sequence
-
-    # Pad input_ids with the pad_token_id (usually 151643 for Qwen)
-    input_ids = pad_sequence(batch_input_ids, batch_first=True, padding_value=151643)
-    attention_mask = pad_sequence(batch_attention_mask, batch_first=True, padding_value=0)
-
-    # pixel_values and image_grid_thw usually don't need padding
-    # if you are doing batch_size=1. If batch_size > 1, you must handle
-    # visual tensor concatenation carefully.
-
-    return {
-        "input_ids": input_ids,
-        "attention_mask": attention_mask,
-        "pixel_values": torch.stack(batch_pixel_values),
-        "image_grid_thw": torch.stack(batch_image_grid_thw),
-        "labels": input_ids.clone()
-    }
-
-
-# Statically collate the dataset in advance
-for i in range(0, len(trainer.train_dataset), batch_size):
-    # Grab a slice of raw items matching your batch size
-    samples = [trainer.train_dataset[j] for j in range(i, min(i + batch_size, len(trainer.train_dataset)))]
-
-    # Run the Hugging Face collator manually on the CPU
-    # This automatically generates input_ids, labels, pixel_values, and image_grid_thw
-    #batch = hf_collator(samples)
-    batch = custom_collate_with_vision(samples, processor)
-
-    processed_batches.append(batch)
-
-print(f"Successfully processed {len(processed_batches)} batches in advance!")
-processed_hf_dataset = processed_batches
-
+del trainer
+gc.collect()
+torch.cuda.empty_cache()
 my_trainer(model, processed_hf_dataset=processed_hf_dataset, save_path="/home/soffer/kaggle/MuseumSCAT/working/lora_adapter", device='cuda')
 
-if TRAIN_EPOCHS > 0:
-    print("Starting training loop...")
-    trainer.train()
-    model.save_pretrained("/home/soffer/kaggle/MuseumSCAT/working/lora_adapter")
-    print("Training Complete!")
+# if TRAIN_EPOCHS > 0:
+#     print("Starting training loop...")
+#     trainer.train()
+#     model.save_pretrained("/home/soffer/kaggle/MuseumSCAT/working/lora_adapter")
+#     print("Training Complete!")
 
 
 
