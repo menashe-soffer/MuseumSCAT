@@ -158,12 +158,14 @@ def run_inference(df, prompt):
 
 
 # ── Execution Block ─────────────────────────────────────────────────────────
+TEST = True
 gc.collect()
 torch.cuda.empty_cache()
-infer_df = test_df.head(5) if SMOKE else test_df
-infer_df = train_df
+infer_df = test_df if TEST else train_df
+infer_df = infer_df.head(5) if SMOKE else infer_df
+output_fname = os.path.join("/home/soffer/kaggle/MuseumSCAT/working/", 'submission_pre_{}.csv'.format('test' if TEST else 'train'))
 preds_df = run_inference(infer_df, prompt=propmt)
-preds_df.to_csv("/home/soffer/kaggle/MuseumSCAT/working/submission_pre.csv", index=False)
+preds_df.to_csv(output_fname, index=False)
 print(preds_df)
 # Clear out lingering baseline training states first
 gc.collect()
@@ -172,12 +174,13 @@ torch.cuda.empty_cache()
 ###
 
 def postprocess(text):
-    if not isinstance(text, str) or text == "MISSING":
-        return text
+    if not isinstance(text, str) or text.upper() == "MISSING":
+        return "MISSING" if text.upper() == "MISSING" else text
     for old, new in {"ö":"ø","Ö":"Ø","ä":"æ","Ä":"Æ","ü":"y","Ü":"Y","ÿ":"y","Ÿ":"Y"}.items():
         text = text.replace(old, new)
     return text
 
 preds_df["verbatimDate"]     = preds_df["verbatimDate"].apply(postprocess)
 preds_df["verbatimLocality"] = preds_df["verbatimLocality"].apply(postprocess)
-preds_df.to_csv("/home/soffer/kaggle/MuseumSCAT/working/submission_post.csv", index=False)
+preds_df.to_csv(output_fname.replace('pre', 'post'), index=False)
+

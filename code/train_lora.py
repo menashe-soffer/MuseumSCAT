@@ -284,147 +284,148 @@ def my_trainer(model, processed_hf_dataset, save_path, device):
 
 
 
+if __name__ == '__main__':
 
-train_df = pd.read_csv(train_file)
-test_df = pd.read_csv(test_file)
+    train_df = pd.read_csv(train_file)
+    test_df = pd.read_csv(test_file)
 
-# 1. Load the raw base architecture
-model, processor = get_model_and_processor(light_quant=True)
+    # 1. Load the raw base architecture
+    model, processor = get_model_and_processor(light_quant=True)
 
-# 2. Extract the TRUE inner model before PEFT wrappers hide it
-# For Qwen2.5-VL, this is the Qwen2_5_VLForConditionalGeneration instance
-raw_base_model = model
+    # 2. Extract the TRUE inner model before PEFT wrappers hide it
+    # For Qwen2.5-VL, this is the Qwen2_5_VLForConditionalGeneration instance
+    raw_base_model = model
 
-# 3. Mandatorily prepare k-bit training hooks on the raw model
-print("Preparing quantized base model parameters...")
-raw_base_model = prepare_model_for_kbit_training(raw_base_model, use_gradient_checkpointing=True)
+    # 3. Mandatorily prepare k-bit training hooks on the raw model
+    print("Preparing quantized base model parameters...")
+    raw_base_model = prepare_model_for_kbit_training(raw_base_model, use_gradient_checkpointing=True)
 
-# 4. Define and apply your exact LoRA configurations
-peft_config = LoraConfig(
-    r=16,
-    lora_alpha=32,
-    target_modules=[
-        "q_proj", "k_proj", "v_proj", "o_proj",
-        "gate_proj", "up_proj", "down_proj"
-    ],
-    lora_dropout=0.05,
-    bias="none",
-    task_type="CAUSAL_LM"
-)
-print("Applying PEFT LoRA wrappers...")
-model = get_peft_model(raw_base_model, peft_config)
+    # 4. Define and apply your exact LoRA configurations
+    peft_config = LoraConfig(
+        r=16,
+        lora_alpha=32,
+        target_modules=[
+            "q_proj", "k_proj", "v_proj", "o_proj",
+            "gate_proj", "up_proj", "down_proj"
+        ],
+        lora_dropout=0.05,
+        bias="none",
+        task_type="CAUSAL_LM"
+    )
+    print("Applying PEFT LoRA wrappers...")
+    model = get_peft_model(raw_base_model, peft_config)
 
-# 5. REVERSE-ENGINEERED: Drill directly to the true core layers to enable checkpointing
-print("Enabling explicit gradient checkpointing on text layers...")
-model.gradient_checkpointing_enable()
+    # 5. REVERSE-ENGINEERED: Drill directly to the true core layers to enable checkpointing
+    print("Enabling explicit gradient checkpointing on text layers...")
+    model.gradient_checkpointing_enable()
 
-# 6. FORCE the true vision transformer module to stop caching forward patches
-model.model.model.gradient_checkpointing_enable()
-model.model.model.language_model.gradient_checkpointing_enable()
-model.model.model.visual.gradient_checkpointing_enable()
+    # 6. FORCE the true vision transformer module to stop caching forward patches
+    model.model.model.gradient_checkpointing_enable()
+    model.model.model.language_model.gradient_checkpointing_enable()
+    model.model.model.visual.gradient_checkpointing_enable()
 
-print("Scanning model for trainable parameters (requires_grad=True)...\n")
+    print("Scanning model for trainable parameters (requires_grad=True)...\n")
 
-trainable_params_found, none_lora = 0, 0
-for name, param in model.named_parameters():
-    if param.requires_grad:
-        #print(f"🔥 TRAINABLE [{param.dtype}] -> {name} | Shape: {list(param.shape)}")
-        trainable_params_found += 1
-        if name.find('.lora_') == -1:
-            none_lora += 1
-print(trainable_params_found, 'layers require grads', none_lora, 'not from lora')
-
-
-def make_row(row):
-    img_path  = os.path.join(dest_dir, row["image_file"])
-    date_val  = str(row["verbatimDate"])
-    loc_val   = str(row["verbatimLocality"])
-    # Training confidences are all 1.0 (ground truth artifact) — use realistic values instead
-    date_conf = 1.0 if date_val == "MISSING" else 0.95
-    loc_conf  = 1.0 if loc_val  == "MISSING" else 0.95
-    return {
-        "messages": [
-            {"role": "user", "content": [
-                {"type": "image", "image": img_path},
-                {"type": "text",  "text": propmt},
-            ]},
-            {"role": "assistant", "content": [
-                {"type": "text", "text": json.dumps({
-                    "verbatimDate":                date_val,
-                    "verbatimDate_confidence":     date_conf,
-                    "verbatimLocality":            loc_val,
-                    "verbatimLocality_confidence": loc_conf,
-                })}
-            ]},
-        ]
-    }
+    trainable_params_found, none_lora = 0, 0
+    for name, param in model.named_parameters():
+        if param.requires_grad:
+            #print(f"🔥 TRAINABLE [{param.dtype}] -> {name} | Shape: {list(param.shape)}")
+            trainable_params_found += 1
+            if name.find('.lora_') == -1:
+                none_lora += 1
+    print(trainable_params_found, 'layers require grads', none_lora, 'not from lora')
 
 
-src = train_df.head(20) if SMOKE else train_df
-hf_dataset = Dataset.from_list([make_row(r) for _, r in src.iterrows()])
-processed_hf_dataset = finalize_dataset_for_training(partially_processed_dataset=hf_dataset, processor=processor, min_pixels=256 * 28 * 28, max_pixels=256 * 28 * 28)
-
-from model_parsing import custom_model_parser, ExecutionFlowWrapper
-#custom_model_parser(model)
-#ExecutionFlowWrapper(processor, model, hf_dataset[0])
-
-print(f"Training on {len(hf_dataset)} samples (smoke={SMOKE})")
-# Clean memory before launching trainer
-gc.collect()
-torch.cuda.empty_cache()
-
-#my_trainer(model, processed_hf_dataset=processed_hf_dataset, save_path="/home/soffer/kaggle/MuseumSCAT/working/lora_adapter", device='cuda')
-# Launch directly into the configured trainer (no placeholder double instantiations)
-trainer = SFTTrainer(
-    model=model,
-    processing_class=processor,
-    train_dataset=hf_dataset,
-    args=SFTConfig(
-        output_dir="/home/soffer/kaggle/MuseumSCAT/checkpoints",
-        report_to="tensorboard",
-        logging_steps=1,
-        per_device_train_batch_size=1,
-        gradient_accumulation_steps=20,
-        optim="adamw_8bit",
-        num_train_epochs=TRAIN_EPOCHS,
-        learning_rate=3e-4,#2e-4,
-        warmup_steps=10,#100,
-        lr_scheduler_type="cosine",
-
-        # Enforce your hardware precision cleanly
-        fp16=False,
-        bf16=True,
-
-        save_strategy="no",
-        remove_unused_columns=False,
-
-        # # ─── ADDED MODERN NATIVE MASKING STRATEGY ───
-        # completion_only_loss=True,                  # Activate -100 parallel matrix masking
-        # packing=False,                              # Required to keep masking calculations intact
-        # # ────────────────────────────────────────────
-        completion_only_loss=False,  # TURN THIS OFF! Stop relying on the broken mask tracker
-        packing=False,               # Keep this False
-
-        # ─── REMOVED dataset_text_field="text" HERE ───
-        dataset_kwargs={"skip_prepare_dataset": False,
-                        "response_template": "<|im_start|>assistant\n"}, # Passed safely here!
-
-        ddp_find_unused_parameters=False,
-        dataloader_num_workers=0,
-    ),
-)
+    def make_row(row):
+        img_path  = os.path.join(dest_dir, row["image_file"])
+        date_val  = str(row["verbatimDate"])
+        loc_val   = str(row["verbatimLocality"])
+        # Training confidences are all 1.0 (ground truth artifact) — use realistic values instead
+        date_conf = 1.0 if date_val == "MISSING" else 0.95
+        loc_conf  = 1.0 if loc_val  == "MISSING" else 0.95
+        return {
+            "messages": [
+                {"role": "user", "content": [
+                    {"type": "image", "image": img_path},
+                    {"type": "text",  "text": propmt},
+                ]},
+                {"role": "assistant", "content": [
+                    {"type": "text", "text": json.dumps({
+                        "verbatimDate":                date_val,
+                        "verbatimDate_confidence":     date_conf,
+                        "verbatimLocality":            loc_val,
+                        "verbatimLocality_confidence": loc_conf,
+                    })}
+                ]},
+            ]
+        }
 
 
-del trainer
-gc.collect()
-torch.cuda.empty_cache()
-my_trainer(model, processed_hf_dataset=processed_hf_dataset, save_path="/home/soffer/kaggle/MuseumSCAT/working/lora_adapter", device='cuda')
+    src = train_df.head(20) if SMOKE else train_df
+    hf_dataset = Dataset.from_list([make_row(r) for _, r in src.iterrows()])
+    processed_hf_dataset = finalize_dataset_for_training(partially_processed_dataset=hf_dataset, processor=processor, min_pixels=256 * 28 * 28, max_pixels=256 * 28 * 28)
 
-# if TRAIN_EPOCHS > 0:
-#     print("Starting training loop...")
-#     trainer.train()
-#     model.save_pretrained("/home/soffer/kaggle/MuseumSCAT/working/lora_adapter")
-#     print("Training Complete!")
+    from model_parsing import custom_model_parser, ExecutionFlowWrapper
+    #custom_model_parser(model)
+    #ExecutionFlowWrapper(processor, model, hf_dataset[0])
+
+    print(f"Training on {len(hf_dataset)} samples (smoke={SMOKE})")
+    # Clean memory before launching trainer
+    gc.collect()
+    torch.cuda.empty_cache()
+
+    #my_trainer(model, processed_hf_dataset=processed_hf_dataset, save_path="/home/soffer/kaggle/MuseumSCAT/working/lora_adapter", device='cuda')
+    # Launch directly into the configured trainer (no placeholder double instantiations)
+    trainer = SFTTrainer(
+        model=model,
+        processing_class=processor,
+        train_dataset=hf_dataset,
+        args=SFTConfig(
+            output_dir="/home/soffer/kaggle/MuseumSCAT/checkpoints",
+            report_to="tensorboard",
+            logging_steps=1,
+            per_device_train_batch_size=1,
+            gradient_accumulation_steps=20,
+            optim="adamw_8bit",
+            num_train_epochs=TRAIN_EPOCHS,
+            learning_rate=3e-4,#2e-4,
+            warmup_steps=10,#100,
+            lr_scheduler_type="cosine",
+
+            # Enforce your hardware precision cleanly
+            fp16=False,
+            bf16=True,
+
+            save_strategy="no",
+            remove_unused_columns=False,
+
+            # # ─── ADDED MODERN NATIVE MASKING STRATEGY ───
+            # completion_only_loss=True,                  # Activate -100 parallel matrix masking
+            # packing=False,                              # Required to keep masking calculations intact
+            # # ────────────────────────────────────────────
+            completion_only_loss=False,  # TURN THIS OFF! Stop relying on the broken mask tracker
+            packing=False,               # Keep this False
+
+            # ─── REMOVED dataset_text_field="text" HERE ───
+            dataset_kwargs={"skip_prepare_dataset": False,
+                            "response_template": "<|im_start|>assistant\n"}, # Passed safely here!
+
+            ddp_find_unused_parameters=False,
+            dataloader_num_workers=0,
+        ),
+    )
+
+
+    del trainer
+    gc.collect()
+    torch.cuda.empty_cache()
+    my_trainer(model, processed_hf_dataset=processed_hf_dataset, save_path="/home/soffer/kaggle/MuseumSCAT/working/lora_adapter", device='cuda')
+
+    # if TRAIN_EPOCHS > 0:
+    #     print("Starting training loop...")
+    #     trainer.train()
+    #     model.save_pretrained("/home/soffer/kaggle/MuseumSCAT/working/lora_adapter")
+    #     print("Training Complete!")
 
 
 
