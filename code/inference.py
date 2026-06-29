@@ -11,14 +11,13 @@ from qwen_vl_utils import process_vision_info
 
 from paths_and_constants import *
 from model import get_model_and_processor#, wrap_with_peft
-from prompt import propmt
-
+from prompt import propmt, large_propmt
 
 train_df = pd.read_csv(train_file)
 test_df = pd.read_csv(test_file)
 
 
-model, processor = get_model_and_processor(light_quant=True, checkpoint_path='/home/soffer/kaggle/MuseumSCAT/working/lora_adapter')
+model, processor = get_model_and_processor(light_quant=True, checkpoint_path='/home/soffer/kaggle/MuseumSCAT/working/lora_adapter_10')
 # ── Raw output ─────────────────────────────────────────────────────────────
 # FastVisionModel.for_inference(model)
 model.eval()
@@ -157,6 +156,33 @@ def run_inference(df, prompt):
     return pd.DataFrame(results)
 
 
+def postprocess(text):
+    if not isinstance(text, str) or text.upper() == "MISSING":
+        return "MISSING" if text.upper() == "MISSING" else text
+    for old, new in {"ö": "ø", "Ö": "Ø", "ä": "æ", "Ä": "Æ", "ü": "y", "Ü": "Y", "ÿ": "y", "Ÿ": "Y"}.items():
+        text = text.replace(old, new)
+
+    return text
+
+def fix_locality(text):
+
+    text = text[0].upper() + text[1:]
+    return text
+# def fix_locality(text):
+#     # capitalize and remove Dania
+#     words = text.split()
+#     keep = np.ones(len(words), dtype=bool)
+#     for i_word, word in enumerate(words):
+#         words[i_word] = word[0].upper() + word[1:]
+#         if word.lower() == 'dania':
+#             keep[i_word] = False
+#             keep[i_word + 1] = False
+#     words = [words[i_word] for i_word in np.argwhere(keep).flatten()]
+#     text = " ".join(words)
+#
+#     return text
+
+
 # ── Execution Block ─────────────────────────────────────────────────────────
 TEST = True
 gc.collect()
@@ -164,7 +190,15 @@ torch.cuda.empty_cache()
 infer_df = test_df if TEST else train_df
 infer_df = infer_df.head(5) if SMOKE else infer_df
 output_fname = os.path.join("/home/soffer/kaggle/MuseumSCAT/working/", 'submission_pre_{}.csv'.format('test' if TEST else 'train'))
-preds_df = run_inference(infer_df, prompt=propmt)
+# #
+# preds_df = pd.read_csv(output_fname)
+# preds_df["verbatimDate"]     = preds_df["verbatimDate"].apply(postprocess)
+# preds_df["verbatimLocality"] = preds_df["verbatimLocality"].apply(postprocess)
+# preds_df["verbatimLocality"] = preds_df["verbatimLocality"].apply(fix_locality)
+# preds_df.to_csv(output_fname.replace('pre', 'post'), index=False)
+# assert False
+# #
+preds_df = run_inference(infer_df, prompt=large_propmt)
 preds_df.to_csv(output_fname, index=False)
 print(preds_df)
 # Clear out lingering baseline training states first
@@ -172,13 +206,6 @@ gc.collect()
 torch.cuda.empty_cache()
 
 ###
-
-def postprocess(text):
-    if not isinstance(text, str) or text.upper() == "MISSING":
-        return "MISSING" if text.upper() == "MISSING" else text
-    for old, new in {"ö":"ø","Ö":"Ø","ä":"æ","Ä":"Æ","ü":"y","Ü":"Y","ÿ":"y","Ÿ":"Y"}.items():
-        text = text.replace(old, new)
-    return text
 
 preds_df["verbatimDate"]     = preds_df["verbatimDate"].apply(postprocess)
 preds_df["verbatimLocality"] = preds_df["verbatimLocality"].apply(postprocess)

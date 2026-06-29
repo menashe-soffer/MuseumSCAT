@@ -260,7 +260,7 @@ if __name__ == "__main__":
     evaluate_competition_metrics(ground_truth_path="/home/soffer/kaggle/MuseumSCAT/museumscat-specimen-collection-annotation-task/train.csv",
                         predictions_path="/home/soffer/kaggle/MuseumSCAT/working/submission_spelling_train.csv")
 
-    visualize_results(ground_truth_path=None,#"/home/soffer/kaggle/MuseumSCAT/museumscat-specimen-collection-annotation-task/train.csv",
+    visualize_results(ground_truth_path=None,#"/home/soffer/kaggle/MuseumSCAT/museumscat-specimen-collection-annotation-task/train.csv",#
                       predictions_path="/home/soffer/kaggle/MuseumSCAT/working/submission_post_test.csv",
                       predictions_path_2="/home/soffer/kaggle/MuseumSCAT/working/submission_spelling_test.csv",
                       images_path="/home/soffer/kaggle/MuseumSCAT/museumscat-specimen-collection-annotation-task/images", idx_list=np.arange(125))

@@ -73,6 +73,7 @@ def finalize_dataset_for_training(partially_processed_dataset, processor, min_pi
 
 
     def process_and_mask_element(example):
+
         messages = example["messages"]
         image_path = messages[0]["content"][0]["image"]
 
@@ -143,11 +144,12 @@ def finalize_dataset_for_training(partially_processed_dataset, processor, min_pi
 
 
 
-def my_trainer(model, processed_hf_dataset, save_path, device):
+def my_trainer(model, processed_hf_dataset, save_path, device, num_epochs=5, label_smoothing=False, optimizer=None):
 
     # Ensure LoRA parameters are explicitly marked as trainable
     model.train()
-    optimizer = bnb.optim.AdamW8bit(filter(lambda p: p.requires_grad, model.parameters()), lr=2e-4)
+    if optimizer is None:
+        optimizer = bnb.optim.AdamW8bit(filter(lambda p: p.requires_grad, model.parameters()), lr=2e-4)
 
     # 2. Your Standard PyTorch DataLoader
     # Inside your custom collate function, ensure tensors are initialized on CPU first:
@@ -186,7 +188,6 @@ def my_trainer(model, processed_hf_dataset, save_path, device):
         # Assumes your dataset outputs pre-processed 'input_ids', 'labels', and 'pixel_values'
     train_loader = torch.utils.data.DataLoader(processed_hf_dataset, batch_size=1, shuffle=True, collate_fn=qwen_collate_fn, pin_memory=True)
 
-    num_epochs = 5
     gradient_accumulation_steps = 20
     # model.gradient_checkpointing_enable()
     # model.config.gradient_checkpointing = True
@@ -281,6 +282,8 @@ def my_trainer(model, processed_hf_dataset, save_path, device):
 
         # Save a native model checkpoint manually per epoch
         model.save_pretrained(f"{save_path}_{epoch + 1}")
+
+    return model, optimizer
 
 
 
@@ -419,7 +422,7 @@ if __name__ == '__main__':
     del trainer
     gc.collect()
     torch.cuda.empty_cache()
-    my_trainer(model, processed_hf_dataset=processed_hf_dataset, save_path="/home/soffer/kaggle/MuseumSCAT/working/lora_adapter", device='cuda')
+    my_trainer(model, processed_hf_dataset=processed_hf_dataset, save_path="/home/soffer/kaggle/MuseumSCAT/working/lora_adapter", device='cuda', num_epochs=10)
 
     # if TRAIN_EPOCHS > 0:
     #     print("Starting training loop...")

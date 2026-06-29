@@ -30,7 +30,7 @@ SMOKE      = False
 BATCH_SIZE = 10 # inference
 T_BATCH_SIZE = 1
 TRAIN_EPOCHS = 5#+15
-SHORT_PROMPT = True
+#SHORT_PROMPT = True
 # ─────────────────────────────────────────────────────────────────────────────
 
 images_dir = "/home/soffer/kaggle/MuseumSCAT/museumscat-specimen-collection-annotation-task/images"

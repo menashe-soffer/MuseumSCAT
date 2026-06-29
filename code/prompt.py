@@ -1,9 +1,7 @@
 import pandas as pd
 
-from paths_and_constants import SHORT_PROMPT
 
-if not SHORT_PROMPT:
-    propmt = """
+large_propmt = """
     You are an expert museum specimen label transcription system.
     Carefully read the date and location of the image and extract the requested metadata.
     
@@ -57,8 +55,7 @@ if not SHORT_PROMPT:
 
 
 
-if SHORT_PROMPT:
-    propmt = """
+propmt = """
     You are an expert museum specimen label transcription system.
     Carefully read the date and location of the image and extract the requested metadata.
     
@@ -67,16 +64,18 @@ if SHORT_PROMPT:
     - IGNORE: Any card showing species names (e.g. "A. subte raneus"), collector names (e.g. "Coll. Rosenberg"), museum logos, barcodes, or color calibration cards.
     - The date and locality are typically on the SAME small card together.
     - If a card contains a latin species name, ignore it.
-    - "Dania" is NOT a locality — it refers to the museum collection. Output "MISSING" for locality if only "Dania" appears.
+    - "Dania" is NOT a locality — omit Dania and the name following "Dania" from the answer.
     
     Rules:
     1. Return ONLY valid JSON.
     2. Preserve original spelling EXACTLY as written — do not correct, expand, or normalize anything.
     3. If a field is unreadable or missing, output "MISSING".
-    6. Confidence must be a decimal number between 0 and 1.0.
-    7. Higher confidence means higher certainty from visual evidence.
-    8. Never hallucinate values not visible in the image.
-    9. Preserve Scandinavian and special Nordic characters exactly when visible (æ, ø, å, ä, ö). Use standard English characters otherwise.
+    4. Confidence must be a decimal number between 0 and 1.0.
+    5. Higher confidence means higher certainty from visual evidence.
+    6. Never hallucinate values not visible in the image.
+    7. Preserve Scandinavian and special Nordic characters exactly when visible (æ, ø, å, ä, ö). Use standard English characters otherwise.
+    8. please preserve capitalization
+    
     
     Required JSON schema:
     {
@@ -96,36 +95,65 @@ if SHORT_PROMPT:
 
 promt_fix = [
     """
-    please look at the image
-    a previous work has extracted the locality from The small handwritten or printed card 
-    the name extracted is:
+    "You are a character-level transcription assistant. 
+    I will provide a locality name where every character is separated by a space, and words are separated by three spaces. 
+    for example, 'Nord skov' is represented as 'N o r d   s k o v'.
+    You must output the corrected locality name using the exact same atomized format. Do not add any extra words or conversational text. 
+    your input is a locality that might be wrong (e.g. mis-spelled, etc.), and your task is to examine the image and fixed it.
+    the locality for you to confirm or fix is:
     """,
     """
-    your task is to examine the image and fix any miss spellings in the Input Locality
     
-    Instructions: 
+    Instructions:
     1. Compare the 'Input Locality' against the text visible in the image.
     2. If the 'Input Locality' is a typo, correct it strictly based on the image.
-    3. Maintain original capitalization and special characters exactly. 
+    3. Maintain original capitalization and special characters exactly.
     4. If the 'Input Locality' is correct, output it exactly as provided.
     5. If the extracted text is 'MISSING', look beyond the card for handwritten text.
-    6. "Dania" is NOT a locality — omit Dania from the answer
+    6. "Dania" is NOT a locality — omit Dania and the name following "Dania" from the answer
     7. Preserve Scandinavian and special Nordic characters exactly when visible (æ, ø, å, ä, ö). Use standard English characters otherwise
 
-Final Output: [Corrected Locality]
+Final Output: in json style, {'locality': locality}
+e.g. {'locality': 'N o r d   s k o v'}
     """
     ]
-# """
+"""
 # Task: You are an expert curator.
 # Input Locality: {extracted_string}
 # Image: [Image tokens]
 # Instructions:
+
+# promt_fix = """
+#     You are an expert museum specimen label transcription system.
+#     Carefully read the location of the image.
+#
+#     The image contains multiple label cards. You must:
+#     - READ: The small handwritten or printed card showing (among other) the collection LOCATION/LOCALITY.
+#     - IGNORE: Any card showing species names (e.g. "A. subte raneus"), collector names (e.g. "Coll. Rosenberg"), museum logos, barcodes, or color calibration cards.
+#     - If a card says "Coll." or "det." or "Tilg." followed by a name or date, ignore that card entirely.
+#     - If a card contains a latin species name, ignore it.
+#     - most cards includes collection date as well, ignore the date, return only the locality(ies)
+#     - "Dania" is NOT a locality — it refers to the museum collection. Output "MISSING" for locality if only "Dania" appears.
+#     - Phrases meaning "in cow dung" (e.g. "i kogøding", "i kogjorning") are NOT locality — ignore them.
+#     - If there are MULTIPLE label cards with locality info, transcribe ALL of them separated by " | " (pipe). "Ti | Kulhuset Jægerspris""
+#     - Even if locality repeats across cards, transcribe both: "10.6.1951 | 10.6.1951"
+#
+#     Rules:
+#     Do not include markdown.
+#     Preserve original spelling EXACTLY as written — do not correct, expand, or normalize anything.
+#     Preserve Scandinavian and special Nordic characters exactly when visible (æ, ø, å, ä, ö). Use standard English characters otherwise.
+#     preserve EXACTLY as written including abbreviations (e.g. "Kb" stays "Kb", not "København").
+#
+#     your final output should be the locality.
+#     """
+
 def get_spell_fix_messages(img_path, input_loc, gt_loc=None):
     # This structure is consistent for both training and inference
     messages = [
         {"role": "user", "content": [
             {"type": "image", "image": img_path},
-            {"type": "text", "text": f"Input Locality: {input_loc}\n" + promt_fix[-1]}
+            {"type": "text", "text": promt_fix[0] + '\n' + input_loc + '\n' + promt_fix[-1]}
+            #{"type": "text", "text": promt_fix}
         ]}
     ]
     if gt_loc:
@@ -135,12 +163,12 @@ def get_spell_fix_messages(img_path, input_loc, gt_loc=None):
 
 
 promt_missing = """
-You are an expert museum specimen label transcription system.
-a former expert tried to read the date and location of the image , but failed to find it.
-in many cases, the former expert fail to locate the locality and date, because he only looked for a card dedicated for the data.
-in many cases, the data is written on the paper on which the specimen is attached to, etc.
-please look carefully to see if you can find location or data or both.
-In any case, Don't hallucinate. if you cannot find locality, return MISSING. if you cannot find date, return missing.
+    You are an expert museum specimen label transcription system.
+    Carefully read the date and location of the image and extract the requested metadata.
+    
+    The image contains a specimen, on a paper. a Date and/or locality may apear on that card.
+    If apear, it may be either handwritten or typed.
+    Your task is to retrieve the date and locality of the speciman, if they apear.
 
     Rules:
     1. Do not include markdown.
@@ -151,6 +179,7 @@ In any case, Don't hallucinate. if you cannot find locality, return MISSING. if 
     6. Preserve Scandinavian and special Nordic characters exactly when visible (æ, ø, å, ä, ö). Use standard English characters otherwise.
     7. For dates: preserve the EXACT format as written. Do NOT expand abbreviations (e.g. "Septmbr" stays "Septmbr", not "September"). Do NOT convert Roman numerals (e.g. "IV" stays "IV"). Do NOT reformat or normalize dates.
     8. For locality: preserve EXACTLY as written including abbreviations (e.g. "Kb" stays "Kb", not "København").
+    9. preserve capitalization
     
     Required JSON schema:
     {
