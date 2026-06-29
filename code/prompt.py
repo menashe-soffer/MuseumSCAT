@@ -179,6 +179,7 @@ promt_missing = """
     6. Preserve Scandinavian and special Nordic characters exactly when visible (æ, ø, å, ä, ö). Use standard English characters otherwise.
     7. For dates: preserve the EXACT format as written. Do NOT expand abbreviations (e.g. "Septmbr" stays "Septmbr", not "September"). Do NOT convert Roman numerals (e.g. "IV" stays "IV"). Do NOT reformat or normalize dates.
     8. For locality: preserve EXACTLY as written including abbreviations (e.g. "Kb" stays "Kb", not "København").
+    9 in some cases, there are multiple localities and dates. in these cases, please retrive all.
     9. preserve capitalization
     
     Required JSON schema:
@@ -191,5 +192,20 @@ promt_missing = """
     {"verbatimDate": "22.5.1977", "verbatimDate_confidence": 0.98, "verbatimLocality": "Svinø strand", "verbatimLocality_confidence": 0.95}
     {"verbatimDate": "MISSING", "verbatimDate_confidence": 1.0, "verbatimLocality": "MISSING", "verbatimLocality_confidence": 1.0}
     {"verbatimDate": "22 VIII 2027", "verbatimDate_confidence": 1.0, "verbatimLocality": "Evæglion", "verbatimLocality_confidence": 1.0}
-    {"verbatimDate": "18/7 70", "verbatimDate_confidence": 0.95, "verbatimLocality": "Faaborg", "verbatimLocality_confidence": 0.95}
+    example for multiple dates and localities:
+    {"verbatimDate": "10.6.1951 | 10.6.1951", "verbatimDate_confidence": 0.98, "verbatimLocality": "Rotholme Jyll. | Rotholme Jyll.", "verbatimLocality_confidence": 0.98}
 """
+
+
+def get_missing_fill_messages(img_path, gt_loc=None, gt_date=None):
+    # This structure is consistent for both training and inference
+    messages = [
+        {"role": "user", "content": [
+            {"type": "image", "image": img_path},
+            {"type": "text", "text": promt_missing}
+        ]}
+    ]
+    if gt_loc and gt_date:
+        out_text = '{"verbatimDate": "' + gt_date + '", "verbatimDate_confidence": 0.95, "verbatimLocality": "' + gt_loc + '", "verbatimLocality_confidence": 0.95}'
+        messages.append({"role": "assistant", "content": [{"type": "text", "text": out_text}]})
+    return {"messages" : messages}

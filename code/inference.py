@@ -12,6 +12,8 @@ from qwen_vl_utils import process_vision_info
 from paths_and_constants import *
 from model import get_model_and_processor#, wrap_with_peft
 from prompt import propmt, large_propmt
+from text_manipulations import *
+
 
 train_df = pd.read_csv(train_file)
 test_df = pd.read_csv(test_file)
@@ -155,14 +157,14 @@ def run_inference(df, prompt):
 
     return pd.DataFrame(results)
 
-
-def postprocess(text):
-    if not isinstance(text, str) or text.upper() == "MISSING":
-        return "MISSING" if text.upper() == "MISSING" else text
-    for old, new in {"ö": "ø", "Ö": "Ø", "ä": "æ", "Ä": "Æ", "ü": "y", "Ü": "Y", "ÿ": "y", "Ÿ": "Y"}.items():
-        text = text.replace(old, new)
-
-    return text
+#
+# def postprocess(text):
+#     if not isinstance(text, str) or text.upper() == "MISSING":
+#         return "MISSING" if text.upper() == "MISSING" else text
+#     for old, new in {"ö": "ø", "Ö": "Ø", "ä": "æ", "Ä": "Æ", "ü": "y", "Ü": "Y", "ÿ": "y", "Ÿ": "Y"}.items():
+#         text = text.replace(old, new)
+#
+#     return text
 
 def fix_locality(text):
 
