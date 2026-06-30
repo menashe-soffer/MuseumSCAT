@@ -27,12 +27,12 @@ def fix_patched_model_folder():
     with open(cfg_path, "w") as f:
         json.dump(cfg, f)
 
-def get_model_and_processor(light_quant=False, checkpoint_path=None):
+def get_model_and_processor(light_quant=False, checkpoint_path=None, large_images=False):
     # Always make sure the patched folder is ready
     fix_patched_model_folder()
 
     min_pixels = 256 * 28 * 28
-    max_pixels = 256 * 28 * 28
+    max_pixels = 256 * 28 * 28 * 4 if large_images else 256 * 28 * 28
 
     processor = AutoProcessor.from_pretrained(
         writable_model_path,

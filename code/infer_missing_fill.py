@@ -24,7 +24,7 @@ def run_fill_missing(input_csv, model_path, show=False):
 
     # 2. Load Model & Refined LoRA
     # Using your existing get_model_and_processor function
-    model, processor = get_model_and_processor(light_quant=True)
+    model, processor = get_model_and_processor(light_quant=True, large_images=True)
     model = PeftModel.from_pretrained(model, model_path)
     model.eval()
 
@@ -80,9 +80,11 @@ def run_fill_missing(input_csv, model_path, show=False):
 
     # 3. Save
     preds_df = pd.DataFrame(results)
+    output_fname = input_csv.replace('pre', 'filled_pre')
+    preds_df.to_csv(output_fname, index=False)
     preds_df["verbatimDate"] = preds_df["verbatimDate"].apply(postprocess)
     preds_df["verbatimLocality"] = preds_df["verbatimLocality"].apply(postprocess)
-    output_fname = input_csv.replace('pre', 'filled')
+    output_fname = input_csv.replace('pre', 'filled_post')
     preds_df.to_csv(output_fname, index=False)
 
     print(f"Done! Saved to {output_fname}")
@@ -91,7 +93,7 @@ def run_fill_missing(input_csv, model_path, show=False):
 if __name__ == "__main__":
     # Point these to your paths
     run_fill_missing(
-        input_csv="/home/soffer/kaggle/MuseumSCAT/working/submission_pre_test.csv",
+        input_csv="/home/soffer/kaggle/MuseumSCAT/working/submission_spelling_pre_test.csv",
         model_path="/home/soffer/kaggle/MuseumSCAT/working/fill_missing_lora_10",
         show=False
     )
